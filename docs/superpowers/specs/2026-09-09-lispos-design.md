@@ -2,7 +2,7 @@
 
 - **Date:** 2026-09-09
 - **Status:** Approved design; ready for implementation planning (Part I)
-- **Working name:** none chosen. Code uses a placeholder package prefix (`aleph`), cheap to rename while the tree is small. See *Naming & mindspace*.
+- **Working name:** **Arkestra** (running default, non-binding — kept cheap to rename while the tree is small; package prefix `arkestra`). See *Naming & mindspace*.
 
 ---
 
@@ -315,7 +315,7 @@ some_os/
 
 ## 12. Naming & mindspace (non-binding, emergent)
 
-No name chosen. No enforced theme. Meaning accretes from use; it is not designed up front, and not back-filled out of a wish for consistency. If a mythology emerges, keep it. The working code name is a placeholder and stays cheap to change while the tree is small.
+**Arkestra** is the running default name — chosen for feel, held loosely. No enforced theme. Meaning accretes from use; it is not designed up front, and not back-filled out of a wish for consistency. If a mythology emerges, keep it. The name stays cheap to change while the tree is small.
 
 **Three directions kept warm** — playful, musical, adjacent to a construction-mindspace:
 
