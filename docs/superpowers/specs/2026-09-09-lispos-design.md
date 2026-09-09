@@ -121,7 +121,7 @@ The seed's entire job is: **load `boot.lisp` and get out of the way.** Anything 
 
 | Piece | Rough size | First-cut scope |
 |---|---|---|
-| Reader | ~150 | symbols, fixnums, lists, strings, `'` quote. No `#` reader macros, no dotted-pair syntax yet |
+| Reader | ~150 | symbols, fixnums, lists, strings, dotted pairs, `'` quote. No `#…` reader macros (the M1 grin-test needs dotted-pair read/print; `#…` syntax and reader macros are what's deferred) |
 | Value repr + tagging | ~100 | tagged pointer: fixnum, cons, symbol, string, primitive-fn, closure. Must hold on x86-64 and AArch64 |
 | Allocator | ~40 | bump-allocate, **no GC**. It leaks. It is a REPL. GC arrives at Milestone 6 |
 | `eval` / `apply` | ~250 | ~10 special forms: `quote if fn def set! do let quasiquote` + **macro support** |
