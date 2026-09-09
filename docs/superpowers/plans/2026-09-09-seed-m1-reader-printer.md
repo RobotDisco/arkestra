@@ -1,6 +1,6 @@
 # Seed M1: Reader + Printer Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **You are writing this yourself.** This plan gives you the module layout, the exact type definitions and public signatures (so M2 stays compatible), every test verbatim, and hints on the parts that are easy to get stuck on. The function *bodies* are yours to write. Work it test-first: write the test, watch it fail, make it pass, commit. Ping the mentor when a hint isn't enough or a design question surfaces.
 
 **Goal:** A `seed` Rust crate that reads Lisp source text into an in-memory value and prints it back, such that `(a (b . c) "hi" 42)` piped in comes back structurally identical.
 
@@ -42,23 +42,20 @@ Copied from the spec; every task's requirements implicitly include these.
 | `seed/tests/golden/*.in`, `*.expected` | golden fixtures (also serve as feature triangulation) |
 | `justfile` | `test`, `run`, `rp` verbs |
 
+**On private helpers:** the plan names helpers like `read_list`, `skip_trivia`, `write_list`, `parse_fixnum`. Those names are suggestions — they're private, so rename freely. The **public** items in each task's *Interfaces → Produces* block are a contract M2 depends on; keep those signatures exact.
+
 ---
 
 ## Task 1: Workspace, `Value` + `Heap`, atoms round-trip
 
 **Files:**
-- Create: `Cargo.toml`
-- Create: `seed/Cargo.toml`
-- Create: `seed/src/value.rs`
-- Create: `seed/src/heap.rs`
-- Create: `seed/src/reader.rs`
-- Create: `seed/src/printer.rs`
-- Create: `seed/src/lib.rs`
+- Create: `Cargo.toml`, `seed/Cargo.toml`
+- Create: `seed/src/value.rs`, `seed/src/heap.rs`, `seed/src/reader.rs`, `seed/src/printer.rs`, `seed/src/lib.rs`, `seed/src/main.rs`
 - Test: inline `#[cfg(test)]` module in `seed/src/lib.rs`
 
 **Interfaces:**
 - Consumes: nothing (first task).
-- Produces:
+- Produces — keep these signatures exact:
   - `value::SymId(pub u32)`, `value::ObjRef(pub u32)` — both `#[derive(Copy, Clone, PartialEq, Eq, Debug)]`; `SymId` also `Hash`.
   - `value::Value` enum: `Nil`, `Fixnum(i64)`, `Sym(SymId)`, `Cons(ObjRef)`, `Str(ObjRef)` — `#[derive(Copy, Clone, PartialEq, Eq, Debug)]`.
   - `Value::nil() -> Value`, `Value::fixnum(i64) -> Value`, `Value::sym(SymId) -> Value` (all `const`); `Value::is_nil(self) -> bool`, `Value::as_fixnum(self) -> Option<i64>`, `Value::as_sym(self) -> Option<SymId>`.
@@ -69,7 +66,7 @@ Copied from the spec; every task's requirements implicitly include these.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `seed/src/lib.rs` with only the test module and `mod`/`pub fn` stubs that won't compile yet is *not* allowed — instead create the full module skeleton with `todo!()` bodies so it compiles, then the test fails at runtime. Put this at the bottom of `seed/src/lib.rs`:
+Create `seed/src/lib.rs`. Put the module declarations and a `read_print` stub with a `todo!()` body at the top so the crate compiles, then this test module at the bottom:
 
 ```rust
 #[cfg(test)]
@@ -119,7 +116,9 @@ name = "seed"
 path = "src/main.rs"
 ```
 
-- [ ] **Step 3: Write `seed/src/value.rs`**
+- [ ] **Step 3: Write `seed/src/value.rs` — the type definitions**
+
+These definitions are the design decision from brainstorming — write them as given. The doc comment matters; it's the reminder of *why* this is a plain enum.
 
 ```rust
 //! The value representation for the seed.
@@ -147,25 +146,24 @@ pub enum Value {
     Cons(ObjRef),
     Str(ObjRef),
 }
-
-impl Value {
-    pub const fn nil() -> Value { Value::Nil }
-    pub const fn fixnum(n: i64) -> Value { Value::Fixnum(n) }
-    pub const fn sym(id: SymId) -> Value { Value::Sym(id) }
-
-    pub fn is_nil(self) -> bool { matches!(self, Value::Nil) }
-
-    pub fn as_fixnum(self) -> Option<i64> {
-        match self { Value::Fixnum(n) => Some(n), _ => None }
-    }
-
-    pub fn as_sym(self) -> Option<SymId> {
-        match self { Value::Sym(s) => Some(s), _ => None }
-    }
-}
 ```
 
+Then an `impl Value` block with these six methods — **you write the bodies**:
+
+```
+pub const fn nil() -> Value
+pub const fn fixnum(n: i64) -> Value
+pub const fn sym(id: SymId) -> Value
+pub fn is_nil(self) -> bool
+pub fn as_fixnum(self) -> Option<i64>
+pub fn as_sym(self) -> Option<SymId>
+```
+
+*Hints:* all one-liners. The constructors just wrap (`Value::Fixnum(n)` etc.); `const fn` changes nothing about the body. `is_nil` — `matches!(self, Value::Nil)`. `as_fixnum` / `as_sym` — a `match` returning `Some(..)` for the one variant, `None` otherwise.
+
 - [ ] **Step 4: Write `seed/src/heap.rs`**
+
+Write the data definitions as given (this layout is the design):
 
 ```rust
 //! Storage for the seed: a bump arena of heap objects plus a symbol interner.
@@ -174,7 +172,6 @@ impl Value {
 //! REPL."). A real allocator/GC replaces this at milestone M6.
 
 use std::collections::HashMap;
-
 use crate::value::{ObjRef, SymId, Value};
 
 enum Obj {
@@ -187,73 +184,29 @@ pub struct Heap {
     sym_names: Vec<String>,
     sym_ids: HashMap<String, SymId>,
 }
-
-impl Heap {
-    pub fn new() -> Heap {
-        Heap { objs: Vec::new(), sym_names: Vec::new(), sym_ids: HashMap::new() }
-    }
-
-    // --- symbols -------------------------------------------------------------
-
-    pub fn intern(&mut self, name: &str) -> SymId {
-        if let Some(&id) = self.sym_ids.get(name) {
-            return id;
-        }
-        let id = SymId(self.sym_names.len() as u32);
-        self.sym_names.push(name.to_string());
-        self.sym_ids.insert(name.to_string(), id);
-        id
-    }
-
-    pub fn sym_name(&self, id: SymId) -> &str {
-        &self.sym_names[id.0 as usize]
-    }
-
-    // --- cons cells --------------------------------------------------------
-
-    pub fn cons(&mut self, car: Value, cdr: Value) -> Value {
-        let r = ObjRef(self.objs.len() as u32);
-        self.objs.push(Obj::Cons(car, cdr));
-        Value::Cons(r)
-    }
-
-    pub fn get_cons(&self, v: Value) -> Option<(Value, Value)> {
-        match v {
-            Value::Cons(ObjRef(i)) => match &self.objs[i as usize] {
-                Obj::Cons(a, d) => Some((*a, *d)),
-                Obj::Str(_) => None,
-            },
-            _ => None,
-        }
-    }
-
-    // --- strings ----------------------------------------------------------
-
-    pub fn string(&mut self, s: String) -> Value {
-        let r = ObjRef(self.objs.len() as u32);
-        self.objs.push(Obj::Str(s));
-        Value::Str(r)
-    }
-
-    pub fn get_str(&self, v: Value) -> Option<&str> {
-        match v {
-            Value::Str(ObjRef(i)) => match &self.objs[i as usize] {
-                Obj::Str(s) => Some(s),
-                Obj::Cons(..) => None,
-            },
-            _ => None,
-        }
-    }
-}
-
-impl Default for Heap {
-    fn default() -> Self { Heap::new() }
-}
 ```
 
-- [ ] **Step 5: Write `seed/src/reader.rs` (atom subset)**
+Then `impl Heap` (and `impl Default for Heap`) with these — **you write the bodies**:
 
-Lists come in Task 2 — for now `(` is an error path so the crate compiles and atom tests pass.
+```
+pub fn new() -> Heap
+pub fn intern(&mut self, name: &str) -> SymId
+pub fn sym_name(&self, id: SymId) -> &str
+pub fn cons(&mut self, car: Value, cdr: Value) -> Value
+pub fn get_cons(&self, v: Value) -> Option<(Value, Value)>
+pub fn string(&mut self, s: String) -> Value
+pub fn get_str(&self, v: Value) -> Option<&str>
+```
+
+*Hints:*
+- `intern`: look in `sym_ids` first (`if let Some(&id) = ...`). On a miss, the new id is `SymId(self.sym_names.len() as u32)`; push the name into `sym_names` and insert into `sym_ids`. You'll `name.to_string()` twice — fine for the seed.
+- `sym_name`: index `sym_names` by `id.0 as usize`.
+- `cons` / `string`: the new `ObjRef` is `ObjRef(self.objs.len() as u32)`; `push` the `Obj`; return `Value::Cons(r)` / `Value::Str(r)`.
+- `get_cons` / `get_str` (`&self`, no `&mut`): match `v` to pull out the `ObjRef`; index `self.objs`; match the `Obj` variant. Any mismatch (wrong `Value` variant, or `Cons` ref pointing at a `Str`) → `None`.
+
+- [ ] **Step 5: Write `seed/src/reader.rs` — atom subset**
+
+Write the error type and the reader struct as given (the `Display` string is part of the contract — tests assert on `"read error:"` and `"at byte "`):
 
 ```rust
 //! The reader: source text -> `Value`.
@@ -281,117 +234,36 @@ pub struct Reader<'a> {
     input: &'a str,
     pos: usize,
 }
-
-impl<'a> Reader<'a> {
-    pub fn new(input: &'a str) -> Reader<'a> {
-        Reader { input, pos: 0 }
-    }
-
-    fn peek(&self) -> Option<char> {
-        self.input[self.pos..].chars().next()
-    }
-
-    fn bump(&mut self) -> Option<char> {
-        let c = self.peek()?;
-        self.pos += c.len_utf8();
-        Some(c)
-    }
-
-    fn err<T>(&self, msg: impl Into<String>) -> Result<T, ReadError> {
-        Err(ReadError { msg: msg.into(), pos: self.pos })
-    }
-
-    fn skip_trivia(&mut self) {
-        loop {
-            match self.peek() {
-                Some(c) if c.is_whitespace() => { self.bump(); }
-                Some(';') => {
-                    while let Some(c) = self.bump() {
-                        if c == '\n' { break; }
-                    }
-                }
-                _ => break,
-            }
-        }
-    }
-
-    /// Read one datum. `Ok(None)` means end of input.
-    pub fn read_one(&mut self, heap: &mut Heap) -> Result<Option<Value>, ReadError> {
-        self.skip_trivia();
-        let c = match self.peek() {
-            None => return Ok(None),
-            Some(c) => c,
-        };
-        match c {
-            '(' => self.err("lists not implemented yet"),
-            ')' => self.err("unexpected `)`"),
-            '"' => self.read_string(heap).map(Some),
-            '\'' => self.err("quote not implemented yet"),
-            _ => self.read_atom(heap).map(Some),
-        }
-    }
-
-    fn read_string(&mut self, heap: &mut Heap) -> Result<Value, ReadError> {
-        let start = self.pos;
-        self.bump(); // opening quote
-        let mut out = String::new();
-        loop {
-            match self.bump() {
-                None => return Err(ReadError { msg: "unterminated string".into(), pos: start }),
-                Some('"') => break,
-                Some('\\') => match self.bump() {
-                    Some('"') => out.push('"'),
-                    Some('\\') => out.push('\\'),
-                    Some('n') => out.push('\n'),
-                    Some(other) => return self.err(format!("unknown string escape `\\{other}`")),
-                    None => return Err(ReadError { msg: "unterminated string".into(), pos: start }),
-                },
-                Some(c) => out.push(c),
-            }
-        }
-        Ok(heap.string(out))
-    }
-
-    fn read_atom(&mut self, heap: &mut Heap) -> Result<Value, ReadError> {
-        let start = self.pos;
-        while let Some(c) = self.peek() {
-            if c.is_whitespace() || matches!(c, '(' | ')' | '"' | ';' | '\'') {
-                break;
-            }
-            self.bump();
-        }
-        let tok = &self.input[start..self.pos];
-        debug_assert!(!tok.is_empty());
-        if tok == "nil" {
-            return Ok(Value::Nil);
-        }
-        if let Some(n) = parse_fixnum(tok) {
-            return Ok(Value::Fixnum(n));
-        }
-        Ok(Value::Sym(heap.intern(tok)))
-    }
-}
-
-/// A token is a fixnum iff it is `[+-]?[0-9]+` and fits in `i64`.
-/// Anything else (`-`, `1+`, `3.5`, `foo`) is a symbol.
-fn parse_fixnum(tok: &str) -> Option<i64> {
-    let body = tok.strip_prefix('+').unwrap_or(tok);
-    let digits = body.strip_prefix('-').unwrap_or(body);
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    body.parse::<i64>().ok()
-}
-
-pub fn read_all(input: &str, heap: &mut Heap) -> Result<Vec<Value>, ReadError> {
-    let mut r = Reader::new(input);
-    let mut out = Vec::new();
-    while let Some(v) = r.read_one(heap)? {
-        out.push(v);
-    }
-    Ok(out)
-}
 ```
+
+Then implement — **bodies are yours**:
+
+```
+impl<'a> Reader<'a>:
+    pub fn new(input: &'a str) -> Reader<'a>
+    fn peek(&self) -> Option<char>
+    fn bump(&mut self) -> Option<char>
+    fn err<T>(&self, msg: impl Into<String>) -> Result<T, ReadError>
+    fn skip_trivia(&mut self)
+    pub fn read_one(&mut self, heap: &mut Heap) -> Result<Option<Value>, ReadError>
+    fn read_string(&mut self, heap: &mut Heap) -> Result<Value, ReadError>
+    fn read_atom(&mut self, heap: &mut Heap) -> Result<Value, ReadError>
+
+free functions:
+    fn parse_fixnum(tok: &str) -> Option<i64>
+    pub fn read_all(input: &str, heap: &mut Heap) -> Result<Vec<Value>, ReadError>
+```
+
+*Hints:*
+- `peek`: `self.input[self.pos..].chars().next()`. Do **not** index the string by byte — this is the only UTF-8 care you need.
+- `bump`: `peek`, then `self.pos += c.len_utf8()`.
+- `err`: build a `ReadError` with `pos: self.pos`; return `Err(..)`. Generic in `T` so you can `return self.err(...)` from any function.
+- `skip_trivia`: loop. Whitespace (`char::is_whitespace`) → `bump`. `;` → `bump` until you consume a `\n` or hit EOF. Anything else → `break`.
+- `read_one`: `skip_trivia`; `peek`; `None` → `Ok(None)`. Dispatch on the first char: `"` → `read_string`; `)` → error "unexpected \`)\`"; **for Task 1 only**, `(` and `'` → an error like "lists not implemented yet" / "quote not implemented yet" so the crate compiles and atom tests run; everything else → `read_atom`.
+- `read_string`: save the opening `pos` for the "unterminated string" error. Consume the opening `"`. Accumulate `char`s into a `String`. On `\\`, read the next char and map `" \ n` to `" \ \n`; any other escape char → error; EOF mid-string → "unterminated string" at the saved pos.
+- `read_atom`: consume until a delimiter — `char::is_whitespace` or one of `( ) " ; '`. Slice `&self.input[start..self.pos]`. Classify the token: exactly `"nil"` → `Value::Nil`; else `parse_fixnum` → `Value::Fixnum`; else `heap.intern(tok)` → `Value::Sym`.
+- `parse_fixnum`: the rule that keeps `-` and `1+` as symbols. Strip one leading `+` (if any), then note a leading `-`; the remaining characters must be non-empty and all ASCII digits before you trust `str::parse::<i64>()`. Return `None` otherwise. (`+5` parsing to `5` and printing as `5` is acceptable — same value, surface not preserved.)
+- `read_all`: loop `read_one`, pushing each `Some(v)` into a `Vec`, stop at `Ok(None)`, propagate `Err` with `?`.
 
 - [ ] **Step 6: Write `seed/src/printer.rs`**
 
@@ -401,91 +273,39 @@ pub fn read_all(input: &str, heap: &mut Heap) -> Result<Vec<Value>, ReadError> {
 
 use crate::heap::Heap;
 use crate::value::Value;
-
-pub fn print_value(v: Value, heap: &Heap) -> String {
-    let mut out = String::new();
-    write_value(&mut out, v, heap);
-    out
-}
-
-fn write_value(out: &mut String, v: Value, heap: &Heap) {
-    match v {
-        Value::Nil => out.push_str("nil"),
-        Value::Fixnum(n) => out.push_str(&n.to_string()),
-        Value::Sym(id) => out.push_str(heap.sym_name(id)),
-        Value::Str(_) => write_string(out, heap.get_str(v).expect("Str obj")),
-        Value::Cons(_) => write_list(out, v, heap),
-    }
-}
-
-fn write_list(out: &mut String, start: Value, heap: &Heap) {
-    out.push('(');
-    let mut v = start;
-    let mut first = true;
-    loop {
-        let (car, cdr) = heap.get_cons(v).expect("Cons obj");
-        if !first { out.push(' '); }
-        first = false;
-        write_value(out, car, heap);
-        match cdr {
-            Value::Nil => break,
-            Value::Cons(_) => v = cdr,
-            other => {
-                out.push_str(" . ");
-                write_value(out, other, heap);
-                break;
-            }
-        }
-    }
-    out.push(')');
-}
-
-fn write_string(out: &mut String, s: &str) {
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            _ => out.push(c),
-        }
-    }
-    out.push('"');
-}
 ```
 
-- [ ] **Step 7: Write `seed/src/lib.rs` (glue above the test module)**
+Implement — **bodies are yours**:
+
+```
+pub fn print_value(v: Value, heap: &Heap) -> String
+fn write_value(out: &mut String, v: Value, heap: &Heap)
+fn write_list(out: &mut String, start: Value, heap: &Heap)
+fn write_string(out: &mut String, s: &str)
+```
+
+*Hints:*
+- `print_value`: make a `String`, hand `&mut` to `write_value`, return it.
+- `write_value`: `match v` — `Nil` → `"nil"`; `Fixnum(n)` → `n.to_string()`; `Sym(id)` → `heap.sym_name(id)`; `Str(_)` → `write_string` with `heap.get_str(v).unwrap()`; `Cons(_)` → `write_list`.
+- `write_list` is the subtle one. Push `(`. Walk: `get_cons` the current value; print the car (space-separate — track a `first` flag); then look at the cdr — `Nil` → stop; `Cons` → make it the current value and loop; **anything else** → push `" . "`, print that value, stop. Push `)`.
+- `write_string`: inverse of the reader's escape set — `"` → `\"`, `\` → `\\`, `\n` → `\n`, everything else verbatim, wrapped in `"`.
+
+- [ ] **Step 7: Finish `seed/src/lib.rs`**
+
+Module declarations (write as given):
 
 ```rust
 pub mod heap;
 pub mod printer;
 pub mod reader;
 pub mod value;
-
-use heap::Heap;
-
-/// Read every datum in `input` and print each on its own line. On a read error,
-/// return the formatted error string. The M1 deliverable surface — used by
-/// `main.rs` and the tests.
-pub fn read_print(input: &str) -> String {
-    let mut heap = Heap::new();
-    match reader::read_all(input, &mut heap) {
-        Ok(vals) => vals
-            .iter()
-            .map(|v| printer::print_value(*v, &heap))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        Err(e) => e.to_string(),
-    }
-}
 ```
 
-- [ ] **Step 8: Run the tests to verify they pass**
+Then `pub fn read_print(input: &str) -> String` — **body is yours**. *Hint:* make a `Heap`, call `reader::read_all`. On `Ok(vals)`, map each through `printer::print_value` and `join("\n")`. On `Err(e)`, return `e.to_string()` (that's the `Display` impl).
 
-Run: `cargo test -p seed`
-Expected: all 11 tests in `tests` PASS. (`cargo test` also compiles `main.rs` — Task 1 does not create it yet, so add a placeholder now: see Step 9.)
+- [ ] **Step 8: Write `seed/src/main.rs`**
 
-- [ ] **Step 9: Add a minimal `seed/src/main.rs` so the bin target compiles**
+Boilerplate — write as given:
 
 ```rust
 use std::io::Read;
@@ -502,8 +322,10 @@ fn main() {
 }
 ```
 
-Run: `cargo test -p seed` again.
-Expected: PASS, and `cargo build -p seed` succeeds.
+- [ ] **Step 9: Run the tests to verify they pass**
+
+Run: `cargo test -p seed`
+Expected: all 11 tests in `tests` PASS; `cargo build -p seed` succeeds.
 
 - [ ] **Step 10: Commit**
 
@@ -517,13 +339,12 @@ git commit -m "feat(seed): value representation, heap arena, atom reader/printer
 ## Task 2: Lists
 
 **Files:**
-- Modify: `seed/src/reader.rs` (replace the `'(' => ...` error arm; add `read_list`)
-- Modify: `seed/src/lib.rs` (add tests to the `tests` module)
-- Test: inline `#[cfg(test)]` module in `seed/src/lib.rs`
+- Modify: `seed/src/reader.rs` (replace the `'('` error arm; add `read_list`)
+- Modify: `seed/src/lib.rs` (add tests)
 
 **Interfaces:**
 - Consumes: everything Task 1 produced.
-- Produces: `Reader::read_list` (private); no new public signatures. Behaviour added: `(` … `)` reads a proper list; `()` reads as `Value::Nil`; lists nest.
+- Produces: `Reader::read_list` (private). Behaviour added: `(` … `)` reads a proper list; `()` reads as `Value::Nil`; lists nest.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -543,39 +364,16 @@ Add to the `tests` module in `seed/src/lib.rs`:
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test -p seed`
-Expected: the six new tests FAIL (`read_print("(a b c)")` returns the string `read error: lists not implemented yet at byte 0`).
+Expected: all six FAIL — `read_print("(a b c)")` returns `read error: lists not implemented yet at byte 0`.
 
-- [ ] **Step 3: Implement `read_list` and wire it in**
+- [ ] **Step 3: Implement `read_list`**
 
-In `seed/src/reader.rs`, change the `'('` arm of `read_one`:
+Change the `(` arm of `read_one` to consume the paren and call `self.read_list(heap).map(Some)`. Add `fn read_list(&mut self, heap: &mut Heap) -> Result<Value, ReadError>`.
 
-```rust
-            '(' => { self.bump(); self.read_list(heap).map(Some) }
-```
-
-Add the method to the `impl<'a> Reader<'a>` block:
-
-```rust
-    fn read_list(&mut self, heap: &mut Heap) -> Result<Value, ReadError> {
-        let mut items: Vec<Value> = Vec::new();
-        loop {
-            self.skip_trivia();
-            match self.peek() {
-                None => return self.err("end of input inside list"),
-                Some(')') => { self.bump(); break; }
-                Some(_) => match self.read_one(heap)? {
-                    Some(v) => items.push(v),
-                    None => return self.err("end of input inside list"),
-                },
-            }
-        }
-        let mut chain = Value::Nil;
-        for v in items.into_iter().rev() {
-            chain = heap.cons(v, chain);
-        }
-        Ok(chain)
-    }
-```
+*Hints:*
+- Loop: `skip_trivia`; `peek`. `None` → error "end of input inside list". `)` → `bump` and stop. Otherwise `read_one` and push the value into a `Vec<Value>` (a `None` from `read_one` here also means EOF → error).
+- Build the chain **right-to-left**: `let mut chain = Value::Nil; for v in items.into_iter().rev() { chain = heap.cons(v, chain); }`. Building left-to-right would mean mutating the previous cell's cdr, which is awkward with index handles — don't.
+- `()` needs no special case: empty `items` leaves `chain == Value::Nil`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -596,11 +394,10 @@ git commit -m "feat(seed): read and print proper lists"
 **Files:**
 - Modify: `seed/src/reader.rs` (`read_list` gains a `.` branch; `read_one` gains the `'` branch; add `dot_is_delimited`)
 - Modify: `seed/src/lib.rs` (add tests)
-- Test: inline `#[cfg(test)]` module in `seed/src/lib.rs`
 
 **Interfaces:**
 - Consumes: everything Task 1–2 produced.
-- Produces: no new public signatures. Behaviour added: `(a . b)` / `(a b . c)` read as improper lists and print with ` . `; `(a . nil)` and `(1 . (2 . nil))` normalise to proper-list printing; `'x` reads as `(quote x)`.
+- Produces: no new public signatures. Behaviour: `(a . b)` / `(a b . c)` read as improper lists and print with ` . `; `(a . nil)` and `(1 . (2 . nil))` normalise to proper-list printing; `'x` reads as `(quote x)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -626,90 +423,31 @@ Add to the `tests` module in `seed/src/lib.rs`:
 
 Run: `cargo test -p seed`
 
-Expected — genuinely FAIL (these drive the implementation):
+Genuinely FAIL (these drive the implementation):
 - `dotted_nil_normalises` — `(a . nil)` prints `(a . nil)`, want `(a)`.
 - `nested_cons_normalises` — `(1 . (2 . nil))` prints `(1 . (2 . nil))`, want `(1 2)`.
-- `dot_with_no_head_errors` — `( . x)` currently reads as the list `(. x)` (symbol named `.`), no error.
+- `dot_with_no_head_errors` — `( . x)` currently reads as the list `(. x)` (a symbol named `.`), no error.
 - `quote_shorthand`, `quote_list` — FAIL with `read error: quote not implemented yet at byte 0`.
 
-Expected — may already PASS accidentally, and that is fine:
-- `simple_dotted`, `dotted_tail` — with `.` read as an ordinary symbol, `(a . b)` is the 3-element list `(a |.| b)`, which prints `(a . b)` — identical to the real dotted pair. The normalisation and error tests above are what force the correct parse.
+May already PASS accidentally, and that's fine:
+- `simple_dotted`, `dotted_tail` — with `.` read as an ordinary symbol, `(a . b)` is the 3-element list `(a |.| b)`, which *prints* `(a . b)` — identical to the real dotted pair. The normalisation and error tests above are what force the correct parse.
 - `foo_dot_bar_is_one_symbol`, `quote_is_structural` — already pass from Tasks 1–2.
 
-> Note for the implementer: before writing code, run the failing tests and read what `read_print` actually returns for each. That output is your starting point; make the minimal change to reach the asserted string.
+> Before writing code, run the failing tests and read what `read_print` actually returns for each. That output is your starting point; make the minimal change to reach the asserted string.
 
 - [ ] **Step 3: Implement the `'` branch in `read_one`**
 
-In `seed/src/reader.rs`, replace the `'\''` arm of `read_one`:
+*Hint:* consume the `'`, `read_one` for the next datum (`None` → error "end of input after \`'\`"), then build `(quote <datum>)` — `heap.cons(Value::Sym(heap.intern("quote")), heap.cons(datum, Value::Nil))`. Watch the borrow order: intern before you start nesting `cons` calls.
 
-```rust
-            '\'' => {
-                self.bump();
-                let quoted = match self.read_one(heap)? {
-                    Some(v) => v,
-                    None => return self.err("end of input after `'`"),
-                };
-                let q = heap.intern("quote");
-                let tail = heap.cons(quoted, Value::Nil);
-                Ok(Some(heap.cons(Value::Sym(q), tail)))
-            }
-```
+- [ ] **Step 4: Implement the dotted-pair branch in `read_list` + `dot_is_delimited`**
 
-- [ ] **Step 4: Implement the dotted-pair branch in `read_list`**
-
-Replace the whole `read_list` method with:
-
-```rust
-    fn read_list(&mut self, heap: &mut Heap) -> Result<Value, ReadError> {
-        let mut items: Vec<Value> = Vec::new();
-        let mut tail = Value::Nil;
-        loop {
-            self.skip_trivia();
-            match self.peek() {
-                None => return self.err("end of input inside list"),
-                Some(')') => { self.bump(); break; }
-                Some('.') if self.dot_is_delimited() => {
-                    if items.is_empty() {
-                        return self.err("nothing before `.`");
-                    }
-                    self.bump(); // consume '.'
-                    match self.read_one(heap)? {
-                        Some(v) => tail = v,
-                        None => return self.err("end of input after `.`"),
-                    }
-                    self.skip_trivia();
-                    match self.peek() {
-                        Some(')') => { self.bump(); break; }
-                        None => return self.err("end of input after dotted tail"),
-                        Some(_) => return self.err("more than one datum after `.`"),
-                    }
-                }
-                Some(_) => match self.read_one(heap)? {
-                    Some(v) => items.push(v),
-                    None => return self.err("end of input inside list"),
-                },
-            }
-        }
-        let mut chain = tail;
-        for v in items.into_iter().rev() {
-            chain = heap.cons(v, chain);
-        }
-        Ok(chain)
-    }
-
-    /// True when the next char is `.` and the char after it ends a token
-    /// (so `.` is the dotted-pair marker, not part of a symbol like `foo.bar`).
-    fn dot_is_delimited(&self) -> bool {
-        let mut chars = self.input[self.pos..].chars();
-        if chars.next() != Some('.') {
-            return false;
-        }
-        match chars.next() {
-            None => true,
-            Some(c) => c.is_whitespace() || matches!(c, '(' | ')' | ';'),
-        }
-    }
-```
+*Hints:*
+- In the `read_list` loop, before the general case, match `Some('.')` **guarded by** `self.dot_is_delimited()`.
+  - If `items.is_empty()` → error "nothing before \`.\`".
+  - Consume the `.`; `read_one` for the tail value; `skip_trivia`; then require `)` — `Some(')')` stop, `None` → "end of input after dotted tail", `Some(_)` → "more than one datum after \`.\`".
+- `fn dot_is_delimited(&self) -> bool`: look at the next two chars **without consuming** (`self.input[self.pos..].chars()`). First must be `.`. Second must be `None` (EOF) or whitespace or one of `( ) ;`. This is what stops `foo.bar` and `...` from being misread — inside `read_atom`, `.` is an ordinary constituent; only this lookahead in list context promotes it to a marker.
+- The fold changes by one word: start `chain = tail` instead of `chain = Value::Nil`, then fold `items` in reverse as before.
+- **No printer change.** `write_list` from Task 1 already prints improper tails. Sanity-check *why* `dotted_nil_normalises` now passes: `(a . nil)` folds to `cons(a, Nil)`, and `write_list` sees a `Nil` cdr and stops → `(a)`.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -729,12 +467,11 @@ git commit -m "feat(seed): dotted pairs and quote shorthand"
 
 **Files:**
 - Modify: `seed/src/lib.rs` (add tests)
-- Modify: `seed/src/reader.rs` only if a test reveals a gap (comment handling already exists from Task 1's `skip_trivia`; this task is mostly locking in behaviour with tests)
-- Test: inline `#[cfg(test)]` module in `seed/src/lib.rs`
+- Modify: `seed/src/reader.rs` only if a test reveals a gap (comment handling already exists from Task 1's `skip_trivia`; this task mostly locks behaviour in with tests)
 
 **Interfaces:**
 - Consumes: everything Task 1–3 produced.
-- Produces: no new signatures. Guarantees: `;` comments are ignored to end of line, including inside lists; every malformed input listed below yields a string starting `read error:` rather than a panic.
+- Produces: no new signatures. Guarantees: `;` comments ignored to end of line, including inside lists; every malformed input below yields a string starting `read error:` rather than a panic.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -773,13 +510,13 @@ Add to the `tests` module in `seed/src/lib.rs`:
 - [ ] **Step 2: Run tests to verify they fail (or pass)**
 
 Run: `cargo test -p seed`
-Expected: the comment tests likely PASS already (Task 1's `skip_trivia` handles `;`); the error tests should also mostly PASS. **Any that fail** point to a real gap — fix it in Step 3. If all pass, this task is pure test coverage: skip to Step 4. Record which tests failed, if any, in the commit message.
+Expected: comment tests likely PASS already (Task 1's `skip_trivia` handles `;`); most error tests likely PASS too. **Any that fail** point to a real gap — fix it in Step 3. If all pass, this task is pure coverage: skip to Step 4. Note in the commit message which (if any) failed.
 
 - [ ] **Step 3: Fix any gap a failing test reveals**
 
-Only if a test failed. Likely candidates and their fixes:
-- `comment_only_input` returning something other than `""` → `read_all` already returns `Ok(vec![])` for no data, so `read_print` returns `""`; if not, check `skip_trivia` consumes a trailing comment with no newline (the `while let Some(c) = self.bump()` loop ends at EOF — correct).
-- A panic instead of a `read error:` string → find the `unwrap`/indexing that panicked and convert it to an `err(...)` return. Do not add error handling anywhere a test does not exercise.
+Only if a test failed. Likely candidates:
+- `comment_only_input` not returning `""` → check `skip_trivia` consumes a trailing comment with no newline (the `bump`-until-`\n`-or-EOF loop should already end cleanly at EOF).
+- A **panic** instead of a `read error:` string → find the `unwrap`/index that panicked and convert it to a `return self.err(...)`. Do not add error handling anywhere a test doesn't exercise (spec §2: no speculative error handling).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -799,29 +536,20 @@ git commit -m "test(seed): lock in comment handling and reader error paths"
 
 **Files:**
 - Create: `seed/tests/roundtrip.rs`
-- Create: `seed/tests/golden/atoms.in`, `seed/tests/golden/atoms.expected`
-- Create: `seed/tests/golden/list.in`, `seed/tests/golden/list.expected`
-- Create: `seed/tests/golden/dotted.in`, `seed/tests/golden/dotted.expected`
-- Create: `seed/tests/golden/quote.in`, `seed/tests/golden/quote.expected`
-- Create: `seed/tests/golden/comment.in`, `seed/tests/golden/comment.expected`
-- Create: `seed/tests/golden/grin.in`, `seed/tests/golden/grin.expected`
+- Create: `seed/tests/golden/{atoms,list,dotted,quote,comment,grin}.{in,expected}`
 - Create: `justfile`
-- Test: `seed/tests/roundtrip.rs`
 
 **Interfaces:**
 - Consumes: `seed::read_print(&str) -> String`.
-- Produces: nothing consumed by later milestones; this task packages M1 for use and regression.
+- Produces: nothing consumed by later milestones; this packages M1 for use and regression.
 
 - [ ] **Step 1: Write the golden fixture files**
 
-`seed/tests/golden/atoms.in`:
-
+`atoms.in`:
 ```
 42 -7 nil foo "hi"
 ```
-
-`seed/tests/golden/atoms.expected`:
-
+`atoms.expected`:
 ```
 42
 -7
@@ -829,86 +557,66 @@ nil
 foo
 "hi"
 ```
-
-`seed/tests/golden/list.in`:
-
+`list.in`:
 ```
 (a b c)
 ()
 (a (b) c)
 ```
-
-`seed/tests/golden/list.expected`:
-
+`list.expected`:
 ```
 (a b c)
 nil
 (a (b) c)
 ```
-
-`seed/tests/golden/dotted.in`:
-
+`dotted.in`:
 ```
 (a . b)
 (a b . c)
 (1 . (2 . nil))
 ```
-
-`seed/tests/golden/dotted.expected`:
-
+`dotted.expected`:
 ```
 (a . b)
 (a b . c)
 (1 2)
 ```
-
-`seed/tests/golden/quote.in`:
-
+`quote.in`:
 ```
 'x
 '(a b)
 (quote z)
 ```
-
-`seed/tests/golden/quote.expected`:
-
+`quote.expected`:
 ```
 (quote x)
 (quote (a b))
 (quote z)
 ```
-
-`seed/tests/golden/comment.in`:
-
+`comment.in`:
 ```
 ; leading comment
 42 ; trailing
 (a ; mid-list
  b)
 ```
-
-`seed/tests/golden/comment.expected`:
-
+`comment.expected`:
 ```
 42
 (a b)
 ```
-
-`seed/tests/golden/grin.in`:
-
+`grin.in`:
 ```
 (a (b . c) "hi" 42)
 ```
-
-`seed/tests/golden/grin.expected`:
-
+`grin.expected`:
 ```
 (a (b . c) "hi" 42)
 ```
 
 - [ ] **Step 2: Write the failing test harness**
 
-`seed/tests/roundtrip.rs`:
+`seed/tests/roundtrip.rs` — test scaffolding, write as given:
 
 ```rust
 //! Golden-file tests. Fixtures are compiled in with `include_str!` (no runtime
@@ -954,11 +662,11 @@ fn printing_is_idempotent() {
 - [ ] **Step 3: Run the harness to verify it passes**
 
 Run: `cargo test -p seed --test roundtrip`
-Expected: both tests PASS. If `grin` fails, the failure message shows `read_print("(a (b . c) \"hi\" 42)")` vs the expected — fix whichever of Tasks 1–4 the mismatch traces to, then re-run.
+Expected: both tests PASS. If `grin` fails, the message shows `read_print("(a (b . c) \"hi\" 42)")` vs expected — trace the mismatch to whichever of Tasks 1–4 owns it, fix, re-run.
 
 - [ ] **Step 4: Write the `justfile`**
 
-`justfile` at the repo root:
+`justfile` at the repo root — write as given:
 
 ```just
 # run the full test suite
@@ -976,18 +684,10 @@ rp arg:
 
 - [ ] **Step 5: Verify the binary by hand**
 
-Run: `just rp '(a (b . c) "hi" 42)'`
-Expected stdout: `(a (b . c) "hi" 42)`
+Run: `just rp '(a (b . c) "hi" 42)'` → expect stdout `(a (b . c) "hi" 42)`
+Run: `printf '%s' '1 2 3' | cargo run -q -p seed` → expect three lines `1` / `2` / `3`
 
-Run: `printf '%s' '1 2 3' | cargo run -q -p seed`
-Expected stdout:
-```
-1
-2
-3
-```
-
-- [ ] **Step 6: Run the whole suite once more**
+- [ ] **Step 6: Run the whole suite**
 
 Run: `cargo test`
 Expected: every test across `lib` and `tests/roundtrip.rs` PASSES.
@@ -1006,27 +706,25 @@ git commit -m "test(seed): golden-file round-trip harness and M1 grin-test"
 **1. Spec coverage.** M1's scope is spec §8 row 1 ("Seed: reader + printer") plus the §6 pieces it necessarily pulls in:
 - Reader — symbols, fixnums, lists, strings, dotted pairs, `'` quote, `;` comments, no `#…` → Tasks 1–4. ✅
 - Printer — nil/fixnum/sym/str/cons canonical forms → Task 1 (atoms), Task 2 (lists), Task 3 (dotted). ✅
-- Value repr + tagging — `value.rs`, plain enum + `u32` refs, architecture-neutral, encapsulated for a later tagged-pointer swap → Task 1. ✅
+- Value repr — `value.rs`, plain enum + `u32` refs, architecture-neutral, encapsulated for a later tagged-pointer swap → Task 1. ✅
 - Allocator — bump `Vec`, no GC, "it leaks" → `heap.rs`, Task 1. ✅
-- Golden-file tests for reader/printer round-trips (spec §9.4) → Task 5. ✅
+- Golden-file tests (spec §9.4) → Task 5. ✅
 - Grin-test `(a (b . c) "hi" 42)` round-trips (spec §8) → Task 5, `grin` fixture. ✅
 - `just` verbs (spec §9.3) → Task 5. ✅
-- Not in M1, correctly absent: `eval`, primitives, macros, `boot.lisp`, the thin-waist module, GC, packages (all later milestones). ✅
+- Correctly absent from M1: `eval`, primitives, macros, `boot.lisp`, thin-waist module, GC, packages. ✅
 
-**2. Placeholder scan.** No "TBD"/"handle edge cases"/"add validation"/"write tests for the above" — every test and every implementation body is spelled out. Task 4 Step 3 is conditional ("only if a test failed") but names the concrete candidates and fixes rather than gesturing. ✅
+**2. Placeholder scan.** No "TBD"/"handle edge cases"/"add validation". Every test is verbatim; every function has a signature and a hint. Task 4 Step 3 is conditional but names concrete candidates. ✅
 
-**3. Type consistency.** `Value` / `SymId` / `ObjRef` / `Heap` / `Reader` / `ReadError` / `read_all` / `read_print` / `print_value` are used with identical signatures everywhere they appear. Allocator methods are `Heap::cons` / `get_cons` / `string` / `get_str` / `intern` / `sym_name` throughout (not, e.g., `alloc_cons` in one place and `cons` in another). `read_one` returns `Result<Option<Value>, ReadError>` consistently. The error string prefix `read error:` in `ReadError::Display` matches every `.starts_with("read error:")` assertion. ✅
+**3. Type consistency.** `Value` / `SymId` / `ObjRef` / `Heap` / `Reader` / `ReadError` / `read_all` / `read_print` / `print_value` appear with identical signatures throughout. Allocator methods are `cons` / `get_cons` / `string` / `get_str` / `intern` / `sym_name` everywhere. `read_one` is `Result<Option<Value>, ReadError>` throughout. The `read error:` prefix in `ReadError::Display` matches every `.starts_with("read error:")` assertion. ✅
 
-**Reconciliation noted:** spec §6's reader row originally said "no dotted-pair syntax yet"; the §8 M1 grin-test requires `(b . c)`. The spec has been updated to include dotted-pair read/print in M1; this plan follows the grin-test.
+**Reconciliation:** spec §6's reader row originally said "no dotted-pair syntax yet"; the §8 M1 grin-test requires `(b . c)`. The spec has been updated to include dotted-pair read/print in M1; this plan follows the grin-test.
 
 ---
 
-## Execution Handoff
+## How to work this plan
 
-Plan complete and saved to `docs/superpowers/plans/2026-09-09-seed-m1-reader-printer.md`. Two execution options:
-
-**1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration.
-
-**2. Inline Execution** — Execute tasks in this session using executing-plans, batch execution with checkpoints.
-
-Which approach?
+- One task at a time, in order. Within a task: write the test(s) → `cargo test -p seed` and watch them fail for the *right* reason → write bodies → green → commit.
+- If a hint leaves you stuck for more than ~15 minutes — borrow checker, a lifetime on `Reader<'a>`, `&self` vs `&mut self` on the heap accessors — that's a good moment to ask the mentor rather than grind.
+- If while implementing you find yourself wanting to change a **public** signature from the *Interfaces → Produces* blocks, stop and raise it — M2's plan is written against those.
+- Private helper names and structure are yours. So is going further than a task asks (a nicer error type, a `Display` for `Value`) — just note it's off-plan so the spec/plan stay in sync.
+- After M1 is green end-to-end, come back and we plan M2 (`eval`, environments, the ~15 primitives, the REPL proper) with the real `Value` type in hand.
