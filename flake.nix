@@ -15,6 +15,9 @@
         packages = with pkgs; [
           just
           cargo
+
+          clippy
+          rustfmt
         ];
       };
     };
