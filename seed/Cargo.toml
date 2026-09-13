@@ -4,6 +4,10 @@ name = "arkestra-seed"
 edition = "2024"
 version = "0.0.1"
 
+[lib]
+name = "seed"
+path = "src/lib.rs"
+
 [[bin]]
 name = "seed"
 path = "src/main.rs"
